@@ -1,138 +1,128 @@
 #include <Arduino.h>
 
+#include "StateMachine.h"
+
+// Enumeration of HW buttons. ¨
+// TIME_ELAPSED is a vitual button when 30s timer elapsed
+// WIND is a virtual button when wind conditions are irregullar
+enum Buttons_enum {NONE, BASE_A, BASE_B, ESC, ENTER, TIME_ELAPSED, WIND};
+
+// Eunumeration of race condition
+enum Race_state {NILL, FROM_A , FROM_B};
+
 /*
 Author V.Urban
 Version 0.1 Alpha - OLED Display
 
  */
 
-#include <OLED.h>//include the OLED library 
-
-
-byte customChar0[] = { 0x04, 0x0E, 0x1F, 0x04, 0x04, 0x04, 0x04, 0x04 };
-byte customChar1[] = { 0x04, 0x0E, 0x1F, 0x04, 0x04, 0x1F, 0x0E, 0x04 };
-byte customChar2[] = { 0x04, 0x04, 0x04, 0x04, 0x04, 0x1F, 0x0E, 0x04 };
+#include <OLED.h> // the OLED library 
+#include <Metro.h> // Metronom Teensy library
 
 OLED oled(OLED_V2, 23, 22, 21, 20, 19, 18, 17); //Version 2(timing), RS, R/W, Enable, D4, D5, D6, D7
+sml::sm<F3F_StateMachine> sm;
 
 
 //-------------------------------------------------------------------------------------------
 void splashScreen()
 {
-  
-
   oled.clear();
   oled.setCursor(0, 0);
   oled.print("F3F COMPETITION ");
   oled.setCursor(0, 1);
-  oled.print("TIMER v2.0 ");
+  oled.print("TIMER v2.0  ");
   
-  // Custom Chars need to be written to CGRAM everytime GR/CH modes been switched
-  oled.createChar(0, customChar0);
-  oled.createChar(1, customChar1);
-  oled.createChar(2, customChar2);
-  oled.setCursor(11, 1);
-  oled.write(0); // Custom char 0-2
-  oled.write(1);
-  oled.write(2);
-  
-  delay(1000);
-  oled.noDisplay();
-  delay(500);
-  oled.display();
-  delay(1000);
-  oled.noDisplay();
-  delay(500);
-  oled.display();
-  delay(1000);
-  oled.noDisplay();
-  delay(500);
-  oled.display();
-  delay(1000);
-
-}
-//-------------------------------------------------------------------------------------------
-void counterSample()
-{
-  //this function prints a simple counter that counts to 250
-  
-  oled.clear();
-  oled.home();// set the cursor to column 0, line 1
-  oled.print("Counter = ");
-  
-  for(int i = 0; i <= 250; i++)
+  for (size_t i = 0; i < 3; i++)
   {
-    oled.setCursor(10,0);
-    oled.print(i, DEC);
-    delay(10);
+    delay(1000);
+    oled.noDisplay();
+    delay(500);
+    oled.display();
   }
-  delay(1000);
-}
-
-
-
-
-void randomTime()
-{
-  
-  oled.setGraphicMode();
-  oled.clear();
-    
-  uint32_t randNumber = random(3000,12000);
-  if (randNumber > 10000) oled.drawDigit(1,1);
-    
-  oled.drawDigit(randNumber/1000%10,2);
-  oled.drawDigit(randNumber/100%10,3);
-  oled.drawDot(4);
-  oled.drawDigit(randNumber/10%10,5);
-  oled.drawDigit(randNumber%10,6);
-  
-  delay(3000);
-  oled.setCharMode();
   
 }
 
-void drawGrDigits()
+// Helper function
+uint8_t read_button()
 {
-  oled.setGraphicMode();
-  oled.clear();
-
-  uint8_t i = 0; 
-  do
+  uint8_t tmp_button = 0;
+  // temp char from Serial input
+  char serial_input = 0;
+  
+  //temp process for buttons emulation
+  if (Serial.available()) 
   {
-    oled.drawDigit(i,i);
-    i++;
-  } while (i < 8);
-  
-  delay(3000);
-  oled.clear();
-  oled.drawDigit(8,0);
-  oled.drawDigit(9,1);
-  oled.drawDot(2);
-  
-  delay(3000);
-  oled.setCharMode();
-  
+    serial_input = Serial.read();
+  }
+
+  switch (serial_input)
+  {
+  case 97: //"a"
+    tmp_button = BASE_A;
+    break;
+  case 100: //"d"
+    tmp_button = BASE_B;
+    break;  
+  case 113: //"q"
+    tmp_button = ESC;
+    break;  
+  case 101: //"e"
+    tmp_button = ENTER;
+    break;  
+  case 119: //"w"
+    tmp_button = WIND;
+    break;  
+  default:
+    tmp_button = NILL;
+    break;
+  }
+
+      
+  //serial_input = 0;
+  return tmp_button;
+
 }
+
 
 void setup() 
 {
   
   oled.begin(16, 2);// Initialize the OLED with 16 characters and 2 lines
   oled.setCharMode(); //In case of soft reset when OLED was in graphics mode
-
+  splashScreen();
+  Serial.begin(9600);
   
 }
 
 void loop() 
 {
-  splashScreen();
+  uint8_t tmp = read_button();
   
-  counterSample();
+  if (tmp == ENTER)
+    sm.process_event(enter_button{});
   
-  randomTime();
+  if (tmp == ESC)
+    sm.process_event(esc_button{});
   
-  drawGrDigits();
+  if (tmp == BASE_A)
+    sm.process_event(A_base_button{});
+  
+  if (tmp == BASE_B)
+    sm.process_event(B_base_button{});
+  
+  if (race_round == 10)
+    sm.process_event(race_finished{});
+  
+  if ((metronom.check() == 1) && elapsed_check == true )
+  {
+    timer_to_elaps--;
+    Serial.printf("Time to elaps: %d \n",timer_to_elaps);
+    if (timer_to_elaps == 0)
+      sm.process_event(timer_elapsed{});
+
+  }
+
+  
 
  
- }
+}
