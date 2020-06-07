@@ -1,54 +1,40 @@
 /*
 Author V.Urban
-Version 0.3 Alpha - OLED + Statemachine Boost::SML +Teensy Audio
-
+Version 0.4 Beta:
+ - OLED library with own implementation of graphics digits - current display 16x2 RS0010 driver 4bit connection with busy check (fast)
+ - Statemachine based on Boost::SML - greatly simplifies the code and has very small memory footprint
+ - Teensy Audio Library and Shield https://www.pjrc.com/store/teensy3_audio.html
+ - Internal Flash as storage of audio files in RAW format (44.1KHz Mono 16bit)
+ - SD card as storage for music or other audio files
+ - DO for sirene with external MOS transistor
+ - Battery Voltage Measurements of LiPo 3 cells as main power source, < 10V triggers message
+ - Seup menu added with audio output Volume settings
+ - TODO: Wind measurement Direction and speed
+ - TODO: Wireless support for remote bases A/B
  */
 #include <Arduino.h>
-
-//#include "StateMachine.h"
 #include "main.h"
 
-#define SDCARD_CS_PIN    10
-#define SDCARD_MOSI_PIN  11
-#define SDCARD_SCK_PIN   13
+Bounce aBaseButton = Bounce(A_PIN, 300);
+Bounce bBaseButton = Bounce(B_PIN, 300);
+Bounce enterButton = Bounce(ENTER_PIN, 100);
+Bounce escButton = Bounce(ESC_PIN, 100);
 
-#include <Arduino.h>
-#include <Audio.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <SD.h>
-#include <SerialFlash.h>
+ADC *adc = new ADC();
 
-// Enumeration of HW buttons.
-// TIME_ELAPSED is a vitual button when 30s timer elapsed
-// WIND is a virtual button when wind conditions are irregullar
-enum Buttons_enum {NONE, BASE_A, BASE_B, ESC, ENTER, TIME_ELAPSED, WIND};
-
-// Eunumeration of race condition
-enum Race_state {NILL, FROM_A , FROM_B};
-
-#define abuttonPin      5
-#define bbuttonPin      2
-#define enterbuttonPin  3
-#define escbuttonPin    4
-#define sirenegpo       22
-
-//#include <OLED.h> // the OLED library 
-#include <Metro.h> // Metronom Teensy library
-#include <Bounce.h> //Bounce Teensy library
-
-
-Bounce aBaseButton = Bounce(abuttonPin, 300);
-Bounce bBaseButton = Bounce(bbuttonPin, 300);
-Bounce enterButton = Bounce(enterbuttonPin, 100);
-Bounce escButton = Bounce(escbuttonPin, 100);
-
-AudioPlaySdWav           playSdWav1;
+AudioPlaySerialflashRaw  playFlashFile;
+AudioPlaySdRaw           playSDFile;
+AudioSynthWaveform       playSynthWave;
+AudioMixer4              mixer;
 AudioOutputI2S           i2s1;
-AudioControlSGTL5000     sgtl5000_1;
-AudioConnection          patchCord1(playSdWav1, 0, i2s1, 0);
-AudioConnection          patchCord2(playSdWav1, 1, i2s1, 1);
+AudioControlSGTL5000     sgtl5000;
+AudioConnection          patchCord1(playFlashFile, 0, mixer, 0);
+AudioConnection          patchCord2(playSDFile, 0, mixer, 1);
+AudioConnection          patchCord3(playSynthWave, 0, mixer, 2);
+AudioConnection          patchCord4(mixer, 0, i2s1, 0);
+AudioConnection          patchCord5(mixer, 0, i2s1, 1);
   
+int batVolt = 0;
 
 sml::sm<F3F_StateMachine> sm;
 
@@ -102,7 +88,7 @@ uint8_t read_button()
     tmp_button = WIND;
     break;  
   default:
-    tmp_button = NILL;
+    tmp_button = NONE;
     break;
   }
 #endif
@@ -116,29 +102,48 @@ uint8_t read_button()
 void setup() 
 {
   
-  pinMode (abuttonPin, INPUT_PULLUP);
-  pinMode (bbuttonPin, INPUT_PULLUP);
-  pinMode (enterbuttonPin, INPUT_PULLUP);
-  pinMode (escbuttonPin, INPUT_PULLUP);
-  pinMode (sirenegpo, OUTPUT);
+  pinMode (A_PIN, INPUT_PULLUP);
+  pinMode (B_PIN, INPUT_PULLUP);
+  pinMode (ENTER_PIN, INPUT_PULLUP);
+  pinMode (ESC_PIN, INPUT_PULLUP);
+  pinMode (SIRENE_PIN, OUTPUT);
+  
+  //pinMode (BAT_VOLT_PIN, INPUT);
 
   oled.begin(16, 2);// Initialize the OLED with 16 characters and 2 lines
   oled.setCharMode(); //In case of soft reset when OLED was in graphics mode
+  oled.setCursor(0, 0);
+  oled.clear();
+  
+  adc->adc0->setAveraging(16);
+  adc->adc0->setResolution(16);
+  adc->adc0->setConversionSpeed(ADC_CONVERSION_SPEED::VERY_LOW_SPEED);
+  adc->adc0->setSamplingSpeed(ADC_SAMPLING_SPEED::MED_SPEED);
   
   AudioMemory(8);
-  sgtl5000_1.enable();
-  sgtl5000_1.volume(0.5);
-  SPI.setMOSI(SDCARD_MOSI_PIN);
-  SPI.setSCK(SDCARD_SCK_PIN);
-  if(!SD.begin(SDCARD_CS_PIN))
-    oled.print("SD Error");
-  delay(1000);
+  SPI.setMOSI(FLASH_MOSI_PIN);
+  SPI.setMISO(FLASH_MISO_PIN);
+  SPI.setSCK(FLASH_SCK_PIN);
+  playSynthWave.begin(0.0, 4000, WAVEFORM_SAWTOOTH);
   
-  sdPlay("intro.wav");
-    
+  
+  sgtl5000.enable();
+  sgtl5000.volume(audioVolume);
+  
+  if(!SD.begin(SDCARD_CS_PIN))
+    oled.print("SD Error        ");
+  delay(1000); //Wait to initilize SD card */
+  
+  if (!SerialFlash.begin(FLASH_CS_PIN)) {
+    oled.print("Error Flash chip");
+    delay(2000);
+  }
+
+  flashPlay("INTRO");
   splashScreen();
   
   sm.process_event(enter_button{}); //goto initial menu
+  batMeasure.reset();
 
 #ifdef DEBUG
   Serial.begin(9600);
@@ -165,31 +170,32 @@ void loop()
   if (race_round == 10)
     sm.process_event(race_finished{});
   
-  if ((metronom.check() == 1) && elapsed_check == true )
+  if ((metronom.check() == 1) and elapsed_check == true )
   {
     timer_to_elaps--;
 
 #ifdef DEBUG
-    Serial.printf("Zbyvajici cas: %.2d \n",timer_to_elaps);
+    Serial.printf("Zbyvajici cas: %2d \n",timer_to_elaps);
 #endif
 
     oled.setCursor(13, 1);
-    oled.printf("%.2d", timer_to_elaps);
+    oled.printf("%2d", timer_to_elaps);
 
-    if (timer_to_elaps == 25 || timer_to_elaps == 20 || timer_to_elaps == 15 || timer_to_elaps <= 10)
+    if (timer_to_elaps == 25 or timer_to_elaps == 20 or timer_to_elaps == 15 or timer_to_elaps <= 10)
       soundDoubleDigit(timer_to_elaps);
 
     if (timer_to_elaps == 0)
       sm.process_event(timer_elapsed{});
-
   }
 
- 
+  if (batMeasure.check() == 1 and bat_check)
+    sm.process_event(menu_button{});
+       
 }
 
 void soundTime(u_int32_t time)
 {
-  sdPlay("comp.wav");
+  flashPlay("COMP");
   delay(300);
 
   if (time > 100000) 
@@ -197,45 +203,129 @@ void soundTime(u_int32_t time)
       soundDoubleDigit(100);
       time = time - 100000;
     }
-    soundDoubleDigit(time/1000%100);
+  soundDoubleDigit(time/1000%100);
+    
+  while (playFlashFile.isPlaying())  {}
+  flashPlay("POINT");
       
-    while (playSdWav1.isPlaying())  {}
-    sdPlay("point.wav");
-        
-    soundDoubleDigit(time/10%100);
+  soundDoubleDigit(time/10%100);
 }
 
 void soundDoubleDigit(uint8_t digit)
 {
   
-  char data[10];
-
   if (digit == 100){
-    while (playSdWav1.isPlaying())  {}
-    sdPlay("100.wav");
+    while (playFlashFile.isPlaying())  {}
+    flashPlayDigit(100);
+  }
+  
+  if (digit == 25){
+    while (playFlashFile.isPlaying())  {}
+    flashPlayDigit(25);
   }
     
-  if (digit > 20 && digit < 100)
+  if (digit > 20 and digit < 100 and !(digit == 25))
   {
-    while (playSdWav1.isPlaying())  {}
-    sprintf(data,"%d.wav",digit-(digit%10));
-    sdPlay(data);
+    while (playFlashFile.isPlaying())  {}
+    flashPlayDigit(digit-(digit%10));
+    
         
-    while (playSdWav1.isPlaying())  {}
-    sprintf(data,"%d.wav",digit%10);
-    sdPlay(data);
+    while (playFlashFile.isPlaying())  {}
+    flashPlayDigit(digit%10);
   }
   
   if (digit <= 20)
   {
-    while (playSdWav1.isPlaying())  {}
-    sprintf(data,"%d.wav",digit);
-    sdPlay(data);
+    while (playFlashFile.isPlaying())  {}
+    flashPlayDigit(digit);
   }
+}
+
+void flashPlay(const char *filename)
+{
+  char buff[10];
+  sprintf(buff,"%s.RAW",filename);
+#ifdef DEBUG
+    Serial.printf("Buff: %s \n",buff);
+#endif
+  
+  playFlashFile.play(buff);
+}
+
+
+void flashPlayDigit(uint8_t digit)
+{
+  char buff[10];
+  sprintf(buff,"%d.RAW",digit);
+#ifdef DEBUG
+    Serial.printf("Buff: %s \n",buff);
+#endif
+
+  playFlashFile.play(buff);
 }
 
 void sdPlay(const char *filename)
 {
-  playSdWav1.play(filename);
-  delay(10);
+  char buff[10];
+  sprintf(buff,"%s.RAW",filename);
+#ifdef DEBUG
+    Serial.printf("Buff: %s \n",buff);
+#endif
+  
+  playSDFile.play(buff);
+}
+
+void sdStop()
+{
+  playSDFile.stop();
+}
+
+void sirene(uint32_t timeDelay)
+{
+  digitalWrite(SIRENE_PIN, HIGH);
+  delay(timeDelay);
+  digitalWrite(SIRENE_PIN, LOW);
+}
+
+void splashScreen()
+{
+  oled.clear();
+  oled.setCursor(0, 0);
+  oled.print("F3F Zvoneni v2.0");
+  oled.setCursor(0, 1);
+  oled.print("Autor - V.Urban");
+  
+  for (size_t i = 0; i < 3; i++)
+  {
+    delay(1000);
+    oled.noDisplay();
+    delay(500);
+    oled.display();
+  }
+  
+}
+
+void batVoltage()
+{
+  batVolt = adc->adc0->analogRead(BAT_VOLT_PIN);
+  float tmpAdc = batVolt*3.3*6.626/adc->adc0->getMaxValue(); //3.3V Ref, 5.217 Resisitive Divider constant
+  oled.setCursor(0, 0);
+  if (tmpAdc < 10.0)
+  {
+    playSynthWave.amplitude(1.0);
+    oled.printf("BAT %4.1fV POZOR!", tmpAdc); 
+    delay(1000);
+    playSynthWave.amplitude(0.0);
+  }
+  else
+    oled.printf("BAT %4.1fV", tmpAdc); 
+#ifdef DEBUG
+    Serial.printf("ADC Value: %d\n", batVolt);
+    Serial.printf("BAT%3.1fV\n",batVolt*3.3*6.626/adc->adc0->getMaxValue());
+#endif
+}
+
+void audVolume(float vol)
+{
+  sgtl5000.volume(vol);
 }

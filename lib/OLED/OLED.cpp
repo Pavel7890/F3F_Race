@@ -303,6 +303,7 @@ size_t OLED::write(uint8_t value)
 {
   send(value, HIGH);
   waitForReady();
+  return 1;
 }
 
 /************ low level data pushing commands **********/
