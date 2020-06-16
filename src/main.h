@@ -42,6 +42,14 @@ void splashScreen();
 void batVoltage();
 void audVolume(float vol);
 
+byte Gbat100[] ={0x0E, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x00};
+byte Gbat80[] = {0x0E, 0x1B, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x00};
+byte Gbat60[] = {0x0E, 0x1B, 0x11, 0x1F, 0x1F, 0x1F, 0x1F, 0x00};
+byte Gbat40[] = {0x0E, 0x1B, 0x11, 0x11, 0x1F, 0x1F, 0x1F, 0x00};
+byte Gbat20[] = {0x0E, 0x1B, 0x11, 0x11, 0x11, 0x1F, 0x1F, 0x00};
+byte Gbat00[] = {0x0E, 0x1B, 0x11, 0x11, 0x11, 0x11, 0x1F, 0x00};
+
+
 // Enumeration of HW buttons.
 // TODO: WIND is a virtual button when wind conditions are irregullar -
 enum Buttons_enum {NONE, BASE_A, BASE_B, ESC, ENTER, WIND};
@@ -57,11 +65,11 @@ namespace
   uint32_t timer_end = 0;
   uint32_t timer_tmp = 0;
   Metro metronom =  Metro(1000); // ticks every 1000ms
-  Metro batMeasure = Metro(30000); //each 60s measurement
+  Metro batMeasure = Metro(30000); //each 30s measurement
   uint8_t timer_to_elaps = 30;
   bool elapsed_check = false;
   bool bat_check = true;
-  float audioVolume = 0.7;
+  float audioVolume = 0.6;
 
   //Events
   struct enter_button {};
@@ -133,6 +141,7 @@ namespace
     Serial.println("V BAZI A");
 #endif
   };
+  
   const auto action_race_started = [] 
   {
     elapsed_check = false;
@@ -155,7 +164,8 @@ namespace
       sirene(400);
       soundDoubleDigit(race_round);
       oled.setCursor(0, 1);
-      oled.printf("KOLO:%d %6.2fs  ",race_round, (float)timer_tmp/1000 );}
+      oled.printf("KOLO:%d %6.2fs  ",race_round, (float)timer_tmp/1000 );
+    }
 #ifdef DEBUG
       Serial.printf("KOLO:%d %6.2fs  \n",race_round, (float)timer_tmp/1000 );
 #endif
@@ -166,7 +176,7 @@ namespace
     timer_end = millis();
     uint32_t timer_race = timer_end - timer_start;
     oled.setCursor(0, 1);
-    oled.print("KOLO:10         ");
+    oled.printf("KOLO:10%6.2fs  ",(float)timer_race/1000);
 #ifdef DEBUG
     Serial.printf("Cas celkovy %5.2f \n", (float)timer_race / 1000);
 #endif
@@ -217,7 +227,7 @@ namespace
   {
     audioVolume += 0.05;
     if (audioVolume > 0.81)
-      audioVolume = 0.4;
+      audioVolume = 0.2;
     audVolume(audioVolume);
     oled.setCursor(0, 1);
     oled.printf("VOL+ %4.1f   MENU", audioVolume*10);
@@ -225,52 +235,52 @@ namespace
     
   struct F3F_StateMachine  
   {
-      auto operator()() const
-      {
-          using namespace sml;
-          return make_transition_table(
-              
-              *"entry"_s          + event<enter_button>   / action_menu           = "menu"_s,
-                
-                "menu"_s           + event<esc_button>     / action_setup          = "setup"_s,
-                "menu"_s           + event<enter_button>   / action_prep           = "prep"_s,
-                "menu"_s           + event<menu_button>    / action_menu           = "menu"_s,
-                
-                "prep"_s           + event<enter_button>   / action_competition    = "competition"_s,
-                "prep"_s           + event<timer_elapsed>  / action_race_anulled   = "race_null"_s,
-                "prep"_s           + event<esc_button>     / action_canceled       = "canceled"_s,
-                
-                "competition"_s    + event<A_base_button>  / action_in_A_base      = "prep_A_base"_s,
-                "competition"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
-                "competition"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
-                
-                "prep_A_base"_s    + event<A_base_button>  / action_race_started   = "race_to_B"_s,
-                "prep_A_base"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
-                "prep_A_base"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
-                
-                "race_to_A"_s      + event<A_base_button>  / action_race           = "race_to_B"_s,
-                "race_to_A"_s      + event<esc_button>     / action_canceled       = "canceled"_s,
-                
-                "race_to_B"_s      + event<B_base_button>  / action_race           = "race_to_A"_s,
-                "race_to_B"_s      + event<race_finished>  / action_race_finished  = "time_eval"_s,
-                "race_to_B"_s      + event<esc_button>     / action_canceled       = "canceled"_s,
-            
-                "time_eval"_s      + event<enter_button>   / action_prep           = "prep"_s,
-                "time_eval"_s      + event<esc_button>     / action_menu           = "menu"_s,
-                "time_eval"_s      + event<menu_button>    / action_menu           = "menu"_s,
-                
-                "canceled"_s       + event<enter_button>   / action_prep           = "prep"_s,
-                "canceled"_s       + event<esc_button>     / action_menu           = "menu"_s,
-                
-                "race_null"_s      + event<enter_button>  / action_prep            = "prep"_s,
-                "race_null"_s      + event<esc_button>    / action_menu            = "menu"_s,
-                
-                "setup"_s          + event<esc_button>    / action_vol,
-                "setup"_s          + sml::on_entry<_>     / [] {sdPlay("MUSIC");},
-                "setup"_s          + sml::on_exit<_>      / [] {sdStop();},
-                "setup"_s          + event<enter_button>  / action_menu            = "menu"_s
+    auto operator()() const
+    {
+      using namespace sml;
+      return make_transition_table(
+        
+        *"entry"_s          + event<enter_button>   / action_menu           = "menu"_s,
+          
+          "menu"_s           + event<esc_button>     / action_setup          = "setup"_s,
+          "menu"_s           + event<enter_button>   / action_prep           = "prep"_s,
+          "menu"_s           + event<menu_button>    / action_menu           = "menu"_s,
+          
+          "prep"_s           + event<enter_button>   / action_competition    = "competition"_s,
+          "prep"_s           + event<timer_elapsed>  / action_race_anulled   = "race_null"_s,
+          "prep"_s           + event<esc_button>     / action_canceled       = "canceled"_s,
+          
+          "competition"_s    + event<A_base_button>  / action_in_A_base      = "prep_A_base"_s,
+          "competition"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
+          "competition"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
+          
+          "prep_A_base"_s    + event<A_base_button>  / action_race_started   = "race_to_B"_s,
+          "prep_A_base"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
+          "prep_A_base"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
+          
+          "race_to_A"_s      + event<A_base_button>  / action_race           = "race_to_B"_s,
+          "race_to_A"_s      + event<esc_button>     / action_canceled       = "canceled"_s,
+          
+          "race_to_B"_s      + event<B_base_button>  / action_race           = "race_to_A"_s,
+          "race_to_B"_s      + event<race_finished>  / action_race_finished  = "time_eval"_s,
+          "race_to_B"_s      + event<esc_button>     / action_canceled       = "canceled"_s,
+      
+          "time_eval"_s      + event<enter_button>   / action_prep           = "prep"_s,
+          "time_eval"_s      + event<esc_button>     / action_menu           = "menu"_s,
+          "time_eval"_s      + event<menu_button>    / action_menu           = "menu"_s,
+          
+          "canceled"_s       + event<enter_button>   / action_prep           = "prep"_s,
+          "canceled"_s       + event<esc_button>     / action_menu           = "menu"_s,
+          
+          "race_null"_s      + event<enter_button>  / action_prep            = "prep"_s,
+          "race_null"_s      + event<esc_button>    / action_menu            = "menu"_s,
+          
+          "setup"_s          + event<esc_button>    / action_vol,
+          "setup"_s          + sml::on_entry<_>     / [] {sdPlay("MUSIC");},
+          "setup"_s          + sml::on_exit<_>      / [] {sdStop();},
+          "setup"_s          + event<enter_button>  / action_menu            = "menu"_s
 
-          );
-      }
+      );
+    }
   };
 }

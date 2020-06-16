@@ -63,7 +63,8 @@ void OLED::init(uint8_t ver, uint8_t rs, uint8_t rw, uint8_t enable,
   
   _displayfunction = LCD_FUNCTIONSET | LCD_4BITMODE;
    
-  begin(16, 2);  
+  //begin(16, 2);
+  
 }
 
 

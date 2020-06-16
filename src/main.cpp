@@ -111,6 +111,14 @@ void setup()
   //pinMode (BAT_VOLT_PIN, INPUT);
 
   oled.begin(16, 2);// Initialize the OLED with 16 characters and 2 lines
+  oled.createChar(5,Gbat100);
+  oled.createChar(4,Gbat80);
+  oled.createChar(3,Gbat60);
+  oled.createChar(2,Gbat40);
+  oled.createChar(1,Gbat20);
+  oled.createChar(0,Gbat00);
+  
+
   oled.setCharMode(); //In case of soft reset when OLED was in graphics mode
   oled.setCursor(0, 0);
   oled.clear();
@@ -143,6 +151,7 @@ void setup()
   splashScreen();
   
   sm.process_event(enter_button{}); //goto initial menu
+  
   batMeasure.reset();
 
 #ifdef DEBUG
@@ -170,7 +179,7 @@ void loop()
   if (race_round == 10)
     sm.process_event(race_finished{});
   
-  if ((metronom.check() == 1) and elapsed_check == true )
+  if ((metronom.check() == 1) and elapsed_check)
   {
     timer_to_elaps--;
 
@@ -313,12 +322,17 @@ void batVoltage()
   if (tmpAdc < 10.0)
   {
     playSynthWave.amplitude(1.0);
-    oled.printf("BAT %4.1fV POZOR!", tmpAdc); 
+    oled.printf("Z%4.1fV    POZOR!",tmpAdc);
     delay(1000);
     playSynthWave.amplitude(0.0);
   }
   else
-    oled.printf("BAT %4.1fV", tmpAdc); 
+  {
+    //oled.print("Z               ");                 //preparation for graphic cursor
+    oled.printf("Z%4.1fV          ",tmpAdc);
+    //oled.setCursor(1, 0);                           //preparation for graphic cursor
+    //oled.write((uint8_t)((tmpAdc-10)/0.52));        //preparation for graphic cursor
+  }
 #ifdef DEBUG
     Serial.printf("ADC Value: %d\n", batVolt);
     Serial.printf("BAT%3.1fV\n",batVolt*3.3*6.626/adc->adc0->getMaxValue());
