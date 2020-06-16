@@ -97,7 +97,8 @@ namespace
   const auto action_setup = [] 
   {
     oled.setCursor(0, 1);
-    oled.printf("VOL+ %4.1f   MENU", audioVolume*10);
+    //oled.printf("VOL+ %4.1f   MENU", audioVolume*10);
+    oled.print("            MENU");
 #ifdef DEBUG
     Serial.println("Setup");
 #endif
@@ -124,6 +125,7 @@ namespace
     metronom.reset();
     elapsed_check = true;
     timer_to_elaps = 30;
+    timer_start = 0;
     oled.setCursor(0, 1);
     oled.print("START        30s");
     flashPlay("START");     
@@ -131,12 +133,21 @@ namespace
     Serial.println("START        30s");
 #endif
   };
+
+  const auto action_timer_started = []
+  {
+    timer_start = millis();
+    elapsed_check = false;
+    sirene(400);
+    oled.setCursor(0, 1);
+    oled.print("  MERENY USEK   ");
+  };
   
   const auto action_in_A_base = [] 
   {
     sirene(400);
     oled.setCursor(0, 1);
-    oled.print("V BAZI A");     
+    oled.print("V BAZI A     ");     
 #ifdef DEBUG
     Serial.println("V BAZI A");
 #endif
@@ -146,7 +157,8 @@ namespace
   {
     elapsed_check = false;
     race_round = 0;
-    timer_start = millis();
+    if (timer_start == 0)
+      timer_start = millis();
     sirene(400);
     oled.setCursor(0, 1);
     oled.print("  MERENY USEK   ");
@@ -225,12 +237,13 @@ namespace
 
   const auto action_vol = []
   {
-    audioVolume += 0.05;
+    /*audioVolume += 0.05;
     if (audioVolume > 0.81)
       audioVolume = 0.2;
-    audVolume(audioVolume);
+    audVolume(audioVolume);*/
     oled.setCursor(0, 1);
-    oled.printf("VOL+ %4.1f   MENU", audioVolume*10);
+    //oled.printf("VOL+ %4.1f   MENU", audioVolume*10);
+    oled.print("            MENU");
   };
     
   struct F3F_StateMachine  
@@ -240,7 +253,7 @@ namespace
       using namespace sml;
       return make_transition_table(
         
-        *"entry"_s          + event<enter_button>   / action_menu           = "menu"_s,
+        *"entry"_s           + event<enter_button>   / action_menu           = "menu"_s,
           
           "menu"_s           + event<esc_button>     / action_setup          = "setup"_s,
           "menu"_s           + event<enter_button>   / action_prep           = "prep"_s,
@@ -251,11 +264,11 @@ namespace
           "prep"_s           + event<esc_button>     / action_canceled       = "canceled"_s,
           
           "competition"_s    + event<A_base_button>  / action_in_A_base      = "prep_A_base"_s,
-          "competition"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
+          "competition"_s    + event<timer_elapsed>  / action_timer_started  = "competition"_s,
           "competition"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
           
           "prep_A_base"_s    + event<A_base_button>  / action_race_started   = "race_to_B"_s,
-          "prep_A_base"_s    + event<timer_elapsed>  / action_race_started   = "race_to_B"_s,
+          "prep_A_base"_s    + event<timer_elapsed>  / action_timer_started  = "prep_A_base"_s,
           "prep_A_base"_s    + event<esc_button>     / action_canceled       = "canceled"_s,
           
           "race_to_A"_s      + event<A_base_button>  / action_race           = "race_to_B"_s,
